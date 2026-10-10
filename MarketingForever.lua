@@ -1,6 +1,7 @@
 -- Marketing Forever
 -- WoW Forever (Interface 16001) - Minimap marketing message manager
 -- Author: SirEggbert / Makers Forge
+-- Single-window UI with square iron border (common theme with CtrlMarks)
 
 local ADDON_NAME = "MarketingForever"
 
@@ -29,7 +30,6 @@ local function GetChannelLabel(channelId)
     return channelId or "Say"
 end
 
--- Safe chat send that prefers modern API
 local function SafeSendChatMessage(msg, chatType, language, target)
     if C_ChatInfo and C_ChatInfo.SendChatMessage then
         C_ChatInfo.SendChatMessage(msg, chatType, language, target)
@@ -38,25 +38,21 @@ local function SafeSendChatMessage(msg, chatType, language, target)
     end
 end
 
--- Place message in chat edit box, send it, then restore previous channel
 local function SendMessageViaEditBox(message, chatType, target)
     local editBox = ChatEdit_GetActiveWindow and ChatEdit_GetActiveWindow()
     if not editBox then
         editBox = DEFAULT_CHAT_FRAME and DEFAULT_CHAT_FRAME.editBox
     end
     if not editBox then
-        -- Fallback to direct send if no edit box
         SafeSendChatMessage(message, chatType, nil, target)
         return
     end
 
-    -- Save previous state
     local oldType = editBox:GetAttribute("chatType") or "SAY"
     local oldTell = editBox:GetAttribute("tellTarget")
     local oldChannel = editBox:GetAttribute("channelTarget")
     local oldText = editBox:GetText() or ""
 
-    -- Apply new channel
     editBox:SetAttribute("chatType", chatType)
     if chatType == "WHISPER" then
         editBox:SetAttribute("tellTarget", target or "")
@@ -71,14 +67,12 @@ local function SendMessageViaEditBox(message, chatType, target)
 
     editBox:SetText(message)
 
-    -- Send
     if ChatEdit_SendText then
         ChatEdit_SendText(editBox, 1)
     else
         SafeSendChatMessage(message, chatType, nil, target)
     end
 
-    -- Restore previous channel / text
     editBox:SetAttribute("chatType", oldType)
     editBox:SetAttribute("tellTarget", oldTell)
     editBox:SetAttribute("channelTarget", oldChannel)
@@ -94,7 +88,6 @@ local function SendSavedMessage(msg)
     local chatType = msg.channel or "SAY"
     local target = msg.target
     if chatType == "CHANNEL" and target then
-        -- Resolve name to number if needed
         local num = tonumber(target)
         if not num then
             local id = GetChannelName(target)
@@ -104,7 +97,6 @@ local function SendSavedMessage(msg)
     SendMessageViaEditBox(msg.text, chatType, target)
 end
 
--- ==================== Minimap Button ====================
 local minimapButton
 
 local function UpdateMinimapButtonPosition()
@@ -131,7 +123,6 @@ local function CreateMinimapButton()
     icon:SetTexture("Interface\\Icons\\INV_Misc_Horn_01")
     icon:SetAllPoints()
     icon:SetTexCoord(0.05, 0.95, 0.05, 0.95)
-    minimapButton.icon = icon
 
     local border = minimapButton:CreateTexture(nil, "OVERLAY")
     border:SetTexture("Interface\\Minimap\\MiniMap-TrackingBorder")
@@ -143,8 +134,6 @@ local function CreateMinimapButton()
     minimapButton:SetScript("OnClick", function(self, button)
         if button == "LeftButton" then
             MarketingForever_ToggleFrame()
-        elseif button == "RightButton" then
-            print("|cff00ccffMarketing Forever|r: Right-click reserved for future options.")
         end
     end)
 
@@ -155,12 +144,8 @@ local function CreateMinimapButton()
         GameTooltip:AddLine("Drag to reposition", 0.7, 0.7, 0.7)
         GameTooltip:Show()
     end)
+    minimapButton:SetScript("OnLeave", GameTooltip.Hide)
 
-    minimapButton:SetScript("OnLeave", function()
-        GameTooltip:Hide()
-    end)
-
-    -- Dragging
     local isDragging = false
     minimapButton:SetScript("OnDragStart", function(self)
         isDragging = true
@@ -176,7 +161,6 @@ local function CreateMinimapButton()
             end
         end)
     end)
-
     minimapButton:SetScript("OnDragStop", function(self)
         isDragging = false
         self:SetScript("OnUpdate", nil)
@@ -185,34 +169,38 @@ local function CreateMinimapButton()
     UpdateMinimapButtonPosition()
 end
 
--- ==================== Main Frame ====================
 local mainFrame
 local scrollChild
-local messageButtons = {}
+local messageRows = {}
+local titleEdit, textEdit, channelDropdown, targetEdit
+local selectedChannel = "YELL"
 
 local function RefreshMessageList()
     if not scrollChild then return end
 
-    -- Clear old
-    for _, btn in ipairs(messageButtons) do
-        btn:Hide()
-        btn:SetParent(nil)
+    for _, row in ipairs(messageRows) do
+        row:Hide()
+        row:SetParent(nil)
     end
-    wipe(messageButtons)
+    wipe(messageRows)
 
-    local y = -8
+    local y = -4
     for i, msg in ipairs(MarketingForeverDB.messages) do
         local row = CreateFrame("Frame", nil, scrollChild)
-        row:SetSize(360, 36)
-        row:SetPoint("TOPLEFT", 8, y)
+        row:SetSize(380, 40)
+        row:SetPoint("TOPLEFT", 6, y)
+
+        local bg = row:CreateTexture(nil, "BACKGROUND")
+        bg:SetAllPoints()
+        bg:SetColorTexture(0.1, 0.1, 0.1, 0.4)
 
         local title = row:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-        title:SetPoint("LEFT", 4, 6)
+        title:SetPoint("LEFT", 8, 6)
         title:SetText(msg.title or ("Message " .. i))
         title:SetTextColor(1, 0.82, 0)
 
         local chan = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-        chan:SetPoint("LEFT", 4, -10)
+        chan:SetPoint("LEFT", 8, -10)
         local targetText = ""
         if msg.channel == "CHANNEL" and msg.target then
             targetText = " #" .. tostring(msg.target)
@@ -220,18 +208,18 @@ local function RefreshMessageList()
             targetText = " to " .. tostring(msg.target)
         end
         chan:SetText(GetChannelLabel(msg.channel) .. targetText)
-        chan:SetTextColor(0.7, 0.7, 0.7)
+        chan:SetTextColor(0.75, 0.75, 0.75)
 
         local sendBtn = CreateFrame("Button", nil, row, "UIPanelButtonTemplate")
-        sendBtn:SetSize(60, 22)
-        sendBtn:SetPoint("RIGHT", -4, 0)
+        sendBtn:SetSize(54, 22)
+        sendBtn:SetPoint("RIGHT", -6, 0)
         sendBtn:SetText("Send")
         sendBtn:SetScript("OnClick", function()
             SendSavedMessage(msg)
         end)
 
         local delBtn = CreateFrame("Button", nil, row, "UIPanelButtonTemplate")
-        delBtn:SetSize(50, 22)
+        delBtn:SetSize(46, 22)
         delBtn:SetPoint("RIGHT", sendBtn, "LEFT", -4, 0)
         delBtn:SetText("Del")
         delBtn:SetScript("OnClick", function()
@@ -239,18 +227,18 @@ local function RefreshMessageList()
             RefreshMessageList()
         end)
 
-        table.insert(messageButtons, row)
-        y = y - 40
+        table.insert(messageRows, row)
+        y = y - 44
     end
 
-    scrollChild:SetHeight(math.max(200, math.abs(y) + 20))
+    scrollChild:SetHeight(math.max(100, math.abs(y) + 8))
 end
 
 local function CreateMainFrame()
     if mainFrame then return end
 
-    mainFrame = CreateFrame("Frame", "MarketingForeverFrame", UIParent, "BasicFrameTemplateWithInset")
-    mainFrame:SetSize(420, 480)
+    mainFrame = CreateFrame("Frame", "MarketingForeverFrame", UIParent, "BackdropTemplate")
+    mainFrame:SetSize(440, 520)
     mainFrame:SetPoint("CENTER")
     mainFrame:SetMovable(true)
     mainFrame:EnableMouse(true)
@@ -258,117 +246,74 @@ local function CreateMainFrame()
     mainFrame:SetScript("OnDragStart", mainFrame.StartMoving)
     mainFrame:SetScript("OnDragStop", mainFrame.StopMovingOrSizing)
     mainFrame:SetClampedToScreen(true)
+    mainFrame:SetFrameStrata("DIALOG")
     mainFrame:Hide()
 
-    mainFrame.title = mainFrame:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
-    mainFrame.title:SetPoint("TOP", 0, -6)
-    mainFrame.title:SetText("Marketing Forever")
+    mainFrame:SetBackdrop({
+        bgFile = "Interface\\DialogFrame\\UI-DialogBox-Background-Dark",
+        edgeFile = "Interface\\AddOns\\MarketingForever\\SquareIron",
+        tile = true,
+        tileSize = 32,
+        edgeSize = 24,
+        insets = { left = 8, right = 8, top = 8, bottom = 8 },
+    })
+    mainFrame:SetBackdropColor(0.08, 0.08, 0.08, 0.92)
+    mainFrame:SetBackdropBorderColor(0.7, 0.65, 0.55, 1)
 
-    -- Scroll frame for list
-    local scroll = CreateFrame("ScrollFrame", nil, mainFrame, "UIPanelScrollFrameTemplate")
-    scroll:SetPoint("TOPLEFT", 12, -32)
-    scroll:SetPoint("BOTTOMRIGHT", -32, 80)
+    local titleText = mainFrame:CreateFontString(nil, "OVERLAY", "GameFontHighlightLarge")
+    titleText:SetPoint("TOP", 0, -14)
+    titleText:SetText("Marketing Forever")
+    titleText:SetTextColor(1, 0.85, 0.6)
 
-    scrollChild = CreateFrame("Frame", nil, scroll)
-    scrollChild:SetSize(360, 200)
-    scroll:SetScrollChild(scrollChild)
+    local closeX = CreateFrame("Button", nil, mainFrame, "UIPanelCloseButton")
+    closeX:SetPoint("TOPRIGHT", -4, -4)
+    closeX:SetScript("OnClick", function() mainFrame:Hide() end)
 
-    -- Add button
-    local addBtn = CreateFrame("Button", nil, mainFrame, "UIPanelButtonTemplate")
-    addBtn:SetSize(120, 24)
-    addBtn:SetPoint("BOTTOMLEFT", 16, 16)
-    addBtn:SetText("Add Message")
-    addBtn:SetScript("OnClick", function()
-        MarketingForever_OpenEditor()
-    end)
+    local adder = CreateFrame("Frame", nil, mainFrame)
+    adder:SetPoint("TOPLEFT", 16, -40)
+    adder:SetPoint("TOPRIGHT", -16, -40)
+    adder:SetHeight(140)
 
-    -- Close
-    local closeBtn = CreateFrame("Button", nil, mainFrame, "UIPanelButtonTemplate")
-    closeBtn:SetSize(80, 24)
-    closeBtn:SetPoint("BOTTOMRIGHT", -16, 16)
-    closeBtn:SetText("Close")
-    closeBtn:SetScript("OnClick", function()
-        mainFrame:Hide()
-    end)
+    local adderBg = adder:CreateTexture(nil, "BACKGROUND")
+    adderBg:SetAllPoints()
+    adderBg:SetColorTexture(0.05, 0.05, 0.05, 0.5)
 
-    mainFrame:SetScript("OnShow", RefreshMessageList)
-end
-
-function MarketingForever_ToggleFrame()
-    CreateMainFrame()
-    if mainFrame:IsShown() then
-        mainFrame:Hide()
-    else
-        mainFrame:Show()
-        RefreshMessageList()
-    end
-end
-
--- ==================== Editor Frame ====================
-local editorFrame
-local titleEdit, textEdit, channelDropdown, targetEdit
-
-local function CreateEditor()
-    if editorFrame then return end
-
-    editorFrame = CreateFrame("Frame", "MarketingForeverEditor", UIParent, "BasicFrameTemplateWithInset")
-    editorFrame:SetSize(400, 280)
-    editorFrame:SetPoint("CENTER", 40, 40)
-    editorFrame:SetMovable(true)
-    editorFrame:EnableMouse(true)
-    editorFrame:RegisterForDrag("LeftButton")
-    editorFrame:SetScript("OnDragStart", editorFrame.StartMoving)
-    editorFrame:SetScript("OnDragStop", editorFrame.StopMovingOrSizing)
-    editorFrame:SetClampedToScreen(true)
-    editorFrame:Hide()
-
-    editorFrame.title = editorFrame:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
-    editorFrame.title:SetPoint("TOP", 0, -6)
-    editorFrame.title:SetText("New Message")
-
-    -- Title
-    local titleLabel = editorFrame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-    titleLabel:SetPoint("TOPLEFT", 16, -36)
+    local titleLabel = adder:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    titleLabel:SetPoint("TOPLEFT", 8, -8)
     titleLabel:SetText("Title:")
 
-    titleEdit = CreateFrame("EditBox", nil, editorFrame, "InputBoxTemplate")
-    titleEdit:SetSize(260, 24)
-    titleEdit:SetPoint("LEFT", titleLabel, "RIGHT", 8, 0)
+    titleEdit = CreateFrame("EditBox", nil, adder, "InputBoxTemplate")
+    titleEdit:SetSize(280, 22)
+    titleEdit:SetPoint("LEFT", titleLabel, "RIGHT", 6, 0)
     titleEdit:SetAutoFocus(false)
     titleEdit:SetMaxLetters(40)
 
-    -- Message text
-    local textLabel = editorFrame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-    textLabel:SetPoint("TOPLEFT", 16, -70)
-    textLabel:SetText("Message:")
+    local msgLabel = adder:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    msgLabel:SetPoint("TOPLEFT", 8, -36)
+    msgLabel:SetText("Message:")
 
-    textEdit = CreateFrame("EditBox", nil, editorFrame, "InputBoxTemplate")
-    textEdit:SetSize(340, 24)
-    textEdit:SetPoint("TOPLEFT", textLabel, "BOTTOMLEFT", 0, -6)
+    textEdit = CreateFrame("EditBox", nil, adder, "InputBoxTemplate")
+    textEdit:SetSize(340, 22)
+    textEdit:SetPoint("TOPLEFT", msgLabel, "BOTTOMLEFT", 0, -4)
     textEdit:SetAutoFocus(false)
     textEdit:SetMaxLetters(255)
-    textEdit:SetMultiLine(false)
 
-    -- Channel
-    local chanLabel = editorFrame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-    chanLabel:SetPoint("TOPLEFT", 16, -130)
+    local chanLabel = adder:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    chanLabel:SetPoint("TOPLEFT", 8, -78)
     chanLabel:SetText("Channel:")
 
-    channelDropdown = CreateFrame("Frame", "MarketingForeverChannelDrop", editorFrame, "UIDropDownMenuTemplate")
-    channelDropdown:SetPoint("LEFT", chanLabel, "RIGHT", -10, -2)
-    UIDropDownMenu_SetWidth(channelDropdown, 140)
+    channelDropdown = CreateFrame("Frame", "MFChannelDrop", adder, "UIDropDownMenuTemplate")
+    channelDropdown:SetPoint("LEFT", chanLabel, "RIGHT", -8, -2)
+    UIDropDownMenu_SetWidth(channelDropdown, 130)
     UIDropDownMenu_SetText(channelDropdown, "Yell")
 
-    local selectedChannel = "YELL"
     local function OnChannelSelect(self)
         selectedChannel = self.value
         UIDropDownMenu_SetText(channelDropdown, self:GetText())
-        if targetEdit then
-            if selectedChannel == "CHANNEL" or selectedChannel == "WHISPER" then
-                targetEdit:Show()
-            else
-                targetEdit:Hide()
-            end
+        if selectedChannel == "CHANNEL" or selectedChannel == "WHISPER" then
+            targetEdit:Show()
+        else
+            targetEdit:Hide()
         end
     end
 
@@ -383,71 +328,75 @@ local function CreateEditor()
         end
     end)
 
-    -- Target (for Channel / Whisper)
-    targetEdit = CreateFrame("EditBox", nil, editorFrame, "InputBoxTemplate")
-    targetEdit:SetSize(140, 24)
-    targetEdit:SetPoint("LEFT", channelDropdown, "RIGHT", 8, 2)
+    targetEdit = CreateFrame("EditBox", nil, adder, "InputBoxTemplate")
+    targetEdit:SetSize(120, 22)
+    targetEdit:SetPoint("LEFT", channelDropdown, "RIGHT", 4, 2)
     targetEdit:SetAutoFocus(false)
     targetEdit:SetMaxLetters(30)
     targetEdit:SetText("1")
     targetEdit:Hide()
 
-    -- Save / Cancel
-    local saveBtn = CreateFrame("Button", nil, editorFrame, "UIPanelButtonTemplate")
-    saveBtn:SetSize(100, 24)
-    saveBtn:SetPoint("BOTTOMLEFT", 16, 16)
+    local saveBtn = CreateFrame("Button", nil, adder, "UIPanelButtonTemplate")
+    saveBtn:SetSize(90, 22)
+    saveBtn:SetPoint("BOTTOMRIGHT", -8, 8)
     saveBtn:SetText("Save")
     saveBtn:SetScript("OnClick", function()
         local title = titleEdit:GetText()
         local text = textEdit:GetText()
         if text == "" then
-            print("|cffff0000Marketing Forever|r: Message text cannot be empty.")
+            print("|cffff0000Marketing Forever|r: Message cannot be empty.")
             return
         end
-        if title == "" then title = text:sub(1, 20) .. (text:len() > 20 and "..." or "") end
+        if title == "" then
+            title = text:sub(1, 22) .. (text:len() > 22 and "..." or "")
+        end
 
-        local entry = {
+        table.insert(MarketingForeverDB.messages, {
             title = title,
             text = text,
             channel = selectedChannel,
             target = (selectedChannel == "CHANNEL" or selectedChannel == "WHISPER") and targetEdit:GetText() or nil,
-        }
-        table.insert(MarketingForeverDB.messages, entry)
-        editorFrame:Hide()
-        if mainFrame and mainFrame:IsShown() then
-            RefreshMessageList()
-        end
-        print("|cff00ccffMarketing Forever|r: Message saved.")
+        })
+
+        titleEdit:SetText("")
+        textEdit:SetText("")
+        targetEdit:SetText("1")
+        RefreshMessageList()
+        print("|cff00ccffMarketing Forever|r: Saved.")
     end)
 
-    local cancelBtn = CreateFrame("Button", nil, editorFrame, "UIPanelButtonTemplate")
-    cancelBtn:SetSize(80, 24)
-    cancelBtn:SetPoint("LEFT", saveBtn, "RIGHT", 8, 0)
-    cancelBtn:SetText("Cancel")
-    cancelBtn:SetScript("OnClick", function()
-        editorFrame:Hide()
-    end)
+    local listLabel = mainFrame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    listLabel:SetPoint("TOPLEFT", 20, -188)
+    listLabel:SetText("Saved Messages")
+    listLabel:SetTextColor(0.9, 0.8, 0.5)
 
-    -- Store selected for later use
-    editorFrame.selectedChannel = function() return selectedChannel end
-    editorFrame.setSelected = function(id)
-        selectedChannel = id
-        UIDropDownMenu_SetText(channelDropdown, GetChannelLabel(id))
+    local scroll = CreateFrame("ScrollFrame", nil, mainFrame, "UIPanelScrollFrameTemplate")
+    scroll:SetPoint("TOPLEFT", 16, -208)
+    scroll:SetPoint("BOTTOMRIGHT", -30, 48)
+
+    scrollChild = CreateFrame("Frame", nil, scroll)
+    scrollChild:SetSize(380, 200)
+    scroll:SetScrollChild(scrollChild)
+
+    local closeBtn = CreateFrame("Button", nil, mainFrame, "UIPanelButtonTemplate")
+    closeBtn:SetSize(80, 24)
+    closeBtn:SetPoint("BOTTOMRIGHT", -16, 12)
+    closeBtn:SetText("Close")
+    closeBtn:SetScript("OnClick", function() mainFrame:Hide() end)
+
+    mainFrame:SetScript("OnShow", RefreshMessageList)
+end
+
+function MarketingForever_ToggleFrame()
+    CreateMainFrame()
+    if mainFrame:IsShown() then
+        mainFrame:Hide()
+    else
+        mainFrame:Show()
+        RefreshMessageList()
     end
 end
 
-function MarketingForever_OpenEditor(existing)
-    CreateEditor()
-    titleEdit:SetText("")
-    textEdit:SetText("")
-    if editorFrame.setSelected then editorFrame.setSelected("YELL") end
-    targetEdit:SetText("1")
-    targetEdit:Hide()
-    editorFrame:Show()
-    titleEdit:SetFocus()
-end
-
--- ==================== Addon Compartment ====================
 function MarketingForever_OnCompartmentClick()
     MarketingForever_ToggleFrame()
 end
@@ -455,7 +404,7 @@ end
 function MarketingForever_OnCompartmentEnter(addonName, menuButtonFrame)
     GameTooltip:SetOwner(menuButtonFrame, "ANCHOR_LEFT")
     GameTooltip:SetText("Marketing Forever", 1, 0.82, 0)
-    GameTooltip:AddLine("Click to open message manager", 1, 1, 1)
+    GameTooltip:AddLine("Click to open", 1, 1, 1)
     GameTooltip:Show()
 end
 
@@ -463,26 +412,23 @@ function MarketingForever_OnCompartmentLeave()
     GameTooltip:Hide()
 end
 
--- ==================== Events / Init ====================
 local f = CreateFrame("Frame")
 f:RegisterEvent("ADDON_LOADED")
 f:RegisterEvent("PLAYER_LOGIN")
 f:SetScript("OnEvent", function(self, event, arg1)
     if event == "ADDON_LOADED" and arg1 == ADDON_NAME then
-        -- Ensure structure
         MarketingForeverDB = MarketingForeverDB or {}
         MarketingForeverDB.minimap = MarketingForeverDB.minimap or { angle = 225 }
         MarketingForeverDB.messages = MarketingForeverDB.messages or {}
         CreateMinimapButton()
     elseif event == "PLAYER_LOGIN" then
         CreateMinimapButton()
-        print("|cff00ccffMarketing Forever|r loaded. Click the horn icon or type /mf")
+        print("|cff00ccffMarketing Forever|r loaded. Horn icon or /mf")
     end
 end)
 
--- Slash commands
 SLASH_MARKETINGFOREVER1 = "/mf"
 SLASH_MARKETINGFOREVER2 = "/marketingforever"
-SlashCmdList["MARKETINGFOREVER"] = function(msg)
+SlashCmdList["MARKETINGFOREVER"] = function()
     MarketingForever_ToggleFrame()
 end
