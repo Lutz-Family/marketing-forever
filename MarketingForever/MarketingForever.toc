@@ -1,0 +1,16 @@
+## Interface: 16001
+## Title: Marketing Forever
+## Notes: Minimap yell icon for saved, channel-targeted marketing messages. Forever only.
+## Author: SirEggbert (Makers Forge)
+## Version: 1.0.1
+## SavedVariables: MarketingForeverDB
+## IconTexture: Interface\AddOns\MarketingForever\MarketingIcon
+## Category: Chat
+## AddonCompartmentFunc: MarketingForever_OnCompartmentClick
+## AddonCompartmentFuncOnEnter: MarketingForever_OnCompartmentEnter
+## AddonCompartmentFuncOnLeave: MarketingForever_OnCompartmentLeave
+## X-License: MIT
+## X-Curse-Project-ID: 0
+## X-Website: https://makers-shack.com
+
+MarketingForever.lua
